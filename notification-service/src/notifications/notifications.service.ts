@@ -13,6 +13,19 @@ export interface UserRegisteredPayload {
   };
 }
 
+export interface OrderCreatedPayload {
+  eventId: string;
+  event: string;
+  version: number;
+  data: {
+    orderId: number | string;
+    userId: number | string;
+    email: string;
+    total: number;
+    name?: string;
+  };
+}
+
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
@@ -21,6 +34,75 @@ export class NotificationsService {
     private readonly prisma: PrismaService,
     private readonly mailService: MailService,
   ) {}
+
+  /**
+   * Handle order.created event with idempotency check and Mailtrap delivery.
+   */
+  async handleOrderCreated(payload: OrderCreatedPayload): Promise<void> {
+    const { eventId, data } = payload;
+    const { orderId, email, total, name } = data;
+
+    // 1. Idempotency Check
+    const existing = await this.prisma.notification.findUnique({
+      where: { eventId },
+    });
+
+    if (existing) {
+      this.logger.warn(`Event ${eventId} has already been processed. Skipping.`);
+      return;
+    }
+
+    const subject = `Order #${orderId} Confirmation`;
+    const template = 'order-created';
+
+    // 2. Save initial PENDING notification record in DB
+    const notification = await this.prisma.notification.create({
+      data: {
+        eventId,
+        type: 'order.created',
+        recipient: email,
+        subject,
+        template,
+        status: 'PENDING',
+        provider: 'mailtrap',
+      },
+    });
+
+    try {
+      // 3. Send order confirmation email using MailService
+      const messageId = await this.mailService.sendOrderConfirmationEmail(
+        email,
+        orderId,
+        total,
+        name,
+      );
+
+      // 4. Update status to SENT
+      await this.prisma.notification.update({
+        where: { id: notification.id },
+        data: {
+          status: 'SENT',
+          sentAt: new Date(),
+          providerMessageId: messageId,
+        },
+      });
+
+      this.logger.log(`Order confirmation notification ${notification.id} sent successfully for event ${eventId}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.logger.error(`Failed to send order confirmation email for event ${eventId}: ${errorMessage}`);
+
+      // 5. Update status to FAILED
+      await this.prisma.notification.update({
+        where: { id: notification.id },
+        data: {
+          status: 'FAILED',
+          errorMessage,
+          attempts: { increment: 1 },
+        },
+      });
+    }
+  }
 
   /**
    * Handle user.registered event with idempotency check and Mailtrap delivery.
