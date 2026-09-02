@@ -59,6 +59,27 @@ export class MailService {
     );
   }
 
+  /**
+   * Helper method for sending order confirmation email.
+   */
+  async sendOrderConfirmationEmail(
+    to: string,
+    orderId: number | string,
+    total: number | string,
+    name?: string,
+  ): Promise<string> {
+    return this.sendMail(
+      to,
+      `Order #${orderId} Confirmation`,
+      'order-created',
+      {
+        name: name || 'Customer',
+        orderId: String(orderId),
+        total: String(total),
+      },
+    );
+  }
+
   private loadTemplate(templateName: string, context: Record<string, string>): string {
     // Look for template in dist or src
     const pathsToTry = [

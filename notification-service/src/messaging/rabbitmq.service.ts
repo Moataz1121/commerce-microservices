@@ -1,7 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as amqp from 'amqplib';
-import { NotificationsService, UserRegisteredPayload } from '../notifications/notifications.service';
+import { NotificationsService, UserRegisteredPayload, OrderCreatedPayload } from '../notifications/notifications.service';
 
 @Injectable()
 export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
@@ -46,34 +46,48 @@ export class RabbitMQService implements OnModuleInit, OnModuleDestroy {
       this.channel = await this.connection.createChannel();
 
       const exchange = 'commerce_events';
-      const queue = 'notification_user_registered';
-      const routingKey = 'user.registered';
-
       await this.channel.assertExchange(exchange, 'topic', { durable: true });
-      await this.channel.assertQueue(queue, { durable: true });
-      await this.channel.bindQueue(queue, exchange, routingKey);
 
-      this.logger.log(`Subscribed to queue "${queue}" bound to exchange "${exchange}" with routing key "${routingKey}"`);
+      // Setup user.registered queue
+      const userQueue = 'notification_user_registered';
+      await this.channel.assertQueue(userQueue, { durable: true });
+      await this.channel.bindQueue(userQueue, exchange, 'user.registered');
 
-      await this.channel.consume(queue, async (msg) => {
+      // Setup order.created queue
+      const orderQueue = 'notification_order_created';
+      await this.channel.assertQueue(orderQueue, { durable: true });
+      await this.channel.bindQueue(orderQueue, exchange, 'order.created');
+
+      this.logger.log(`Subscribed to queues "${userQueue}" and "${orderQueue}" on exchange "${exchange}"`);
+
+      // Consume user.registered queue
+      await this.channel.consume(userQueue, async (msg) => {
         if (!msg) return;
-
         try {
-          const content = msg.content.toString();
-          const payload = JSON.parse(content) as UserRegisteredPayload;
-
+          const payload = JSON.parse(msg.content.toString()) as UserRegisteredPayload;
           this.logger.log(`Received event "${payload.event}" (eventId: ${payload.eventId})`);
-
           if (payload.event === 'user.registered') {
             await this.notificationsService.handleUserRegistered(payload);
-          } else {
-            this.logger.warn(`Unhandled event type: ${payload.event}`);
           }
-
           this.channel.ack(msg);
         } catch (err) {
-          this.logger.error('Error processing RabbitMQ message:', err);
-          // Acknowledge to prevent message loop during dev/testing
+          this.logger.error('Error processing user.registered message:', err);
+          this.channel.ack(msg);
+        }
+      });
+
+      // Consume order.created queue
+      await this.channel.consume(orderQueue, async (msg) => {
+        if (!msg) return;
+        try {
+          const payload = JSON.parse(msg.content.toString()) as OrderCreatedPayload;
+          this.logger.log(`Received event "${payload.event}" (eventId: ${payload.eventId})`);
+          if (payload.event === 'order.created') {
+            await this.notificationsService.handleOrderCreated(payload);
+          }
+          this.channel.ack(msg);
+        } catch (err) {
+          this.logger.error('Error processing order.created message:', err);
           this.channel.ack(msg);
         }
       });
