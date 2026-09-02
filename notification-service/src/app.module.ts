@@ -4,6 +4,8 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { MailModule } from './mail/mail.module';
+import { MessagingModule } from './messaging/messaging.module';
 
 @Module({
   imports: [
@@ -12,8 +14,11 @@ import { NotificationsModule } from './notifications/notifications.module';
     }),
     PrismaModule,
     NotificationsModule,
+    MailModule,
+    MessagingModule,
   ],
   controllers: [AppController],
   providers: [AppService],
 })
 export class AppModule {}
+

@@ -2,24 +2,43 @@
 
 namespace App\Services;
 
+use App\Messaging\RabbitMQPublisher;
 use App\Models\User;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Str;
 
 class AuthService
 {
+    public function __construct(
+        protected RabbitMQPublisher $publisher
+    ) {}
+
     /**
      * Register a new user.
      *
-     * @param array{email: string, password: string} $data
+     * @param array{name: string, email: string, password: string} $data
      * @return User
      */
     public function register(array $data): User
     {
-        return User::create([
+        $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
             'password' => $data['password'],
         ]);
+
+        $this->publisher->publish('commerce_events', 'user.registered', [
+            'eventId' => Str::uuid()->toString(),
+            'event' => 'user.registered',
+            'version' => 1,
+            'data' => [
+                'userId' => $user->id,
+                'email' => $user->email,
+                'name' => $user->name,
+            ],
+        ]);
+
+        return $user;
     }
 
     /**
